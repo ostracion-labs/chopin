@@ -160,6 +160,16 @@ export function harnessSelection(): Pick<
 	Config,
 	"host" | "harness" | "harnessAuth" | "harnessExtensions"
 > {
+	if (process.env.CHOPIN_MODE === "workspace") {
+		return {
+			host: process.env.SERVER_HOST || "127.0.0.1",
+			harness: process.env.CHOPIN_WORKSPACE_AGENT === "codex"
+				? (process.env.CHOPIN_LOCAL_AI ? "local-ai" : "codex")
+				: "remote",
+			harnessAuth: undefined,
+			harnessExtensions: [],
+		};
+	}
 	return {
 		host: process.env.SERVER_HOST || "127.0.0.1",
 		harness: process.env.HARNESS || "copilot-sdk",
@@ -262,10 +272,24 @@ function connectorVersion() {
 }
 
 export function load(): Config {
-	let agent = process.env.AGENT !== "off";
-	let backgroundJobs = process.env.BACKGROUND_JOBS !== "off";
-	let conversationPlan = process.env.CONVERSATION_PLAN === "on";
-	let conversationInitiativeModel = process.env.CONVERSATION_INITIATIVE_MODEL || undefined;
+	let workspace = process.env.CHOPIN_MODE === "workspace";
+	if (process.env.CHOPIN_MODE && !workspace) {
+		throw new Error("CHOPIN_MODE must be workspace or unset");
+	}
+	if (
+		workspace && process.env.CHOPIN_WORKSPACE_AGENT
+		&& !["codex", "off"].includes(process.env.CHOPIN_WORKSPACE_AGENT)
+	) {
+		throw new Error("CHOPIN_WORKSPACE_AGENT must be codex or off");
+	}
+	let agent = workspace
+		? process.env.CHOPIN_WORKSPACE_AGENT === "codex"
+		: process.env.AGENT !== "off";
+	let backgroundJobs = !workspace && process.env.BACKGROUND_JOBS !== "off";
+	let conversationPlan = !workspace && process.env.CONVERSATION_PLAN === "on";
+	let conversationInitiativeModel = workspace
+		? undefined
+		: process.env.CONVERSATION_INITIATIVE_MODEL || undefined;
 	if (conversationInitiativeModel && !CLASSIFIER.test(conversationInitiativeModel)) {
 		throw new Error(
 			"CONVERSATION_INITIATIVE_MODEL must be an exact classifier provider/id, such as typesafe/jev-latest",
@@ -277,10 +301,10 @@ export function load(): Config {
 		60_000,
 	);
 	let plannerVisuals = process.env.PLANNER_VISUALS === "on" && agent;
-	let liveBuild = process.env.LIVE_BUILD === "on";
-	let liveSpikes = process.env.LIVE_SPIKES === "on";
+	let liveBuild = !workspace && process.env.LIVE_BUILD === "on";
+	let liveSpikes = !workspace && process.env.LIVE_SPIKES === "on";
 	let liveSpikesRegexJudge = liveSpikes && process.env.LIVE_SPIKES_REGEX_JUDGE === "on";
-	let decisionsModel = process.env.DECISIONS_MODEL
+	let decisionsModel = workspace ? undefined : process.env.DECISIONS_MODEL
 		|| (process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY
 			? "typesafe/jev-latest"
 			: process.env.OPENAI_API_KEY
@@ -304,7 +328,7 @@ export function load(): Config {
 		? "CONVERSATION_PLAN=on"
 		: plannerVisuals
 		? "PLANNER_VISUALS=on"
-		: agent
+		: agent && !workspace
 		? "AGENT is enabled"
 		: undefined;
 	if (needsDecisions && !decisionsModel) {
@@ -340,13 +364,20 @@ export function load(): Config {
 	if (agentConnectionMaxSilenceMs < agentConnectionTimeoutMs) {
 		throw new Error("AGENT_CONNECTION_MAX_SILENCE_MS must be at least AGENT_CONNECTION_TIMEOUT_MS");
 	}
-	let selection = harnessSelection();
+	let selection = workspace
+		? {
+			host: process.env.SERVER_HOST || "127.0.0.1",
+			harness: agent ? (process.env.CHOPIN_LOCAL_AI ? "local-ai" : "codex") : "remote",
+			harnessAuth: undefined,
+			harnessExtensions: [],
+		}
+		: harnessSelection();
 	let serverPort = port();
 	return {
 		...selection,
 		port: serverPort,
-		model: model(selection.harness),
-		historyModel: process.env.HISTORY_MODEL || model(selection.harness),
+		model: workspace ? "" : model(selection.harness),
+		historyModel: workspace ? "" : process.env.HISTORY_MODEL || model(selection.harness),
 		plannerAttachGraceMs,
 		agentConnectionPingMs,
 		agentConnectionTimeoutMs,
@@ -364,10 +395,10 @@ export function load(): Config {
 		connectorVersion: connectorVersion(),
 		liveBuild,
 		buildResumeMs: milliseconds("CHOPIN_BUILD_RESUME_MS", 600_000, 3_600_000),
-		setupAgents: setupAgents(process.env.CHOPIN_SETUP_AGENTS),
+		setupAgents: workspace ? [] : setupAgents(process.env.CHOPIN_SETUP_AGENTS),
 		liveSpikes,
 		liveSpikesRegexJudge,
-		devClient: process.env.DEV_CLIENT || undefined,
+		devClient: workspace ? undefined : process.env.DEV_CLIENT || undefined,
 		clientDir: process.env.CLIENT_DIR || undefined,
 		handover: handover(),
 		storage: storage(),
@@ -385,7 +416,9 @@ export function load(): Config {
 export function describe(config: Config): string {
 	let users = config.auth.allowedUsers?.size ?? 0;
 	let organizations = config.auth.allowedOrganizations?.size ?? 0;
-	let admission = users || organizations
+	let admission = config.auth.workspace
+		? "auth: local workspace (single owner)"
+		: users || organizations
 		? `auth: github${
 			config.auth.local ? " local device flow" : ""
 		} (restricted: ${users} users, ${organizations} organizations)`
@@ -399,7 +432,7 @@ export function describe(config: Config): string {
 		...(config.harness === "atomic"
 			? ["Planner: full Atomic session (shell and filesystem access as this process's user)"]
 			: []),
-		...(config.harness === "remote"
+		...(config.harness === "remote" && !config.auth.workspace
 			? ["Planner: attached client over /api/v1/agent (model and client tools run on its machine)"]
 			: []),
 		...(config.harnessExtensions.length
@@ -410,7 +443,9 @@ export function describe(config: Config): string {
 		config.conversationPlan
 			? `conversation plan: ${config.decisionsModel}`
 			: "conversation plan: off",
-		`visual assessment: ${config.decisionsModel ?? "unavailable"}`,
+		`visual assessment: ${
+			config.auth.workspace ? "off (workspace mode)" : config.decisionsModel ?? "unavailable"
+		}`,
 		config.liveBuild ? "live build: on" : "live build: off",
 		config.liveSpikes ? "live spikes: on" : "live spikes: off",
 		admission,

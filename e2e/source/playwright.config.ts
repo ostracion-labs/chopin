@@ -22,6 +22,7 @@ export default defineConfig({
 		"collapse-deletion.native.ts",
 		"open-card.native.ts",
 		"card-gap.native.ts",
+		"collaboration-caret.native.ts",
 	],
 	workers: 1,
 	fullyParallel: false,

@@ -57,6 +57,34 @@ function text(...chunks: string[]): Part[] {
 	];
 }
 
+test("a configured local classifier preserves withholding and the Decision repair turn", async () => {
+	let f = fixture([text("Which approach should I use?"), text("I created the decision card.")]);
+	let seen: string[] = [];
+	await publishPlannerReplies({
+		...f.options,
+		decide: undefined,
+		checkReply: async reply => {
+			seen.push(reply);
+			return !reply.includes("Which approach");
+		},
+	});
+	expect(seen).toEqual(["Which approach should I use?", "I created the decision card."]);
+	expect(f.prompts).toHaveLength(2);
+	expect(f.published).toEqual(text("I created the decision card."));
+});
+
+test("a failed local classifier cannot publish unchecked text", async () => {
+	let f = fixture([text("Unverified reply")]);
+	await expect(publishPlannerReplies({
+		...f.options,
+		decide: undefined,
+		checkReply: async () => {
+			throw new Error("Classifier disconnected");
+		},
+	})).rejects.toThrow("Classifier disconnected");
+	expect(f.published).toEqual([]);
+});
+
 test("no text is published until the complete message has a safe verdict", async () => {
 	let checking = Promise.withResolvers<void>();
 	let checked = Promise.withResolvers<void>();

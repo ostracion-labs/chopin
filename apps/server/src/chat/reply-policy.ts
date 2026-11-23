@@ -104,6 +104,8 @@ export async function publishPlannerReplies(options: {
 	prompt: string;
 	signal: AbortSignal;
 	decide: Decide | undefined;
+	/** A runtime-backed typed judge can use the member's existing login instead of a classifier API. */
+	checkReply?: (text: string, signal: AbortSignal) => Promise<boolean>;
 	/** Count new, durably captured Planner decisions from the authoritative document state. */
 	capturedDecisions?: () => number;
 	/** Count decisions that already existed and that the Planner repeated this turn. */
@@ -126,7 +128,9 @@ export async function publishPlannerReplies(options: {
 			let text = messages.get(id);
 			messages.delete(id);
 			if (!text?.trim() || signal.aborted) return;
-			let allowed = await checkPlannerReply(text, decide, signal);
+			let allowed = options.checkReply
+				? await options.checkReply(text, signal)
+				: await checkPlannerReply(text, decide, signal);
 			if (signal.aborted) return;
 			if (!allowed) {
 				rejected = true;

@@ -12,6 +12,7 @@ import {
 	writeRepositoryCache,
 } from "./repository-snapshot";
 import { TerminalAlert } from "./terminal-alert";
+import { useWorkspaceMode } from "./workspace-mode";
 
 import type { RepositorySnapshot } from "./repository-snapshot";
 import type { NavigationDialogMotion } from "./navigation-dialog";
@@ -59,6 +60,7 @@ export function AddProjectDialog(
 		userId: string;
 	},
 ) {
+	let workspace = useWorkspaceMode();
 	let input = useRef<HTMLInputElement>(null);
 	let [snapshot, setSnapshot] = useState<RepositorySnapshot | undefined>(() =>
 		readRepositoryCache(userId)
@@ -202,11 +204,15 @@ export function AddProjectDialog(
 							<div className="navigation-palette-status flex-col gap-1 text-center" role="status">
 								<p className="font-medium text-text-primary">No repositories to add yet</p>
 								<p className="max-w-[40ch] text-text-tertiary">
-									Install the GitHub App for Chopin on the repositories you want to write about.
+									{workspace
+										? "Register a local checkout to add it here."
+										: "Install the GitHub App for Chopin on the repositories you want to write about."}
 								</p>
-								<a className="btn btn-sm btn-primary mt-2" href="/auth/github/install">
-									Install the GitHub App for Chopin
-								</a>
+								{!workspace && (
+									<a className="btn btn-sm btn-primary mt-2" href="/auth/github/install">
+										Install the GitHub App for Chopin
+									</a>
+								)}
 							</div>
 						)
 				)}
@@ -221,9 +227,11 @@ export function AddProjectDialog(
 					/>
 				)}
 			</div>
-			<div className="navigation-palette-footer">
-				<a href="/auth/github/install">Manage repository access</a>
-			</div>
+			{!workspace && (
+				<div className="navigation-palette-footer">
+					<a href="/auth/github/install">Manage repository access</a>
+				</div>
+			)}
 		</NavigationDialog>
 	);
 }

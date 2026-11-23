@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -66,6 +66,9 @@ async function server(directory: string, unavailable = false, extra: Record<stri
 	let errors = "";
 	child.stderr?.on("data", chunk => {
 		errors += String(chunk).slice(-2_000);
+		if (process.env.E2E_CODEX_DEBUG && extra.CHOPIN_MODE === "workspace") {
+			process.stderr.write(String(chunk));
+		}
 	});
 	processes.push(child);
 	for (let index = 0; index < 150; index++) {
@@ -305,4 +308,262 @@ test("local device approval, backend fallback, restart and logout", async ({ pag
 	await page.getByRole("menuitem", { name: "Sign out" }).click();
 	await expect(page.getByText("Open your workspace")).toBeVisible();
 	expect(await readdir(join(directory, "config"))).toHaveLength(0);
+});
+
+test("local workspace Codex answers ordinary Chat, reads local source, edits, asks approvals and resumes per-document conversations", async ({ page }) => {
+	test.setTimeout(90_000);
+	let directory = await mkdtemp(join(tmpdir(), "chopin-codex-e2e-"));
+	directories.push(directory);
+	let checkout = join(directory, "checkout");
+	await mkdir(join(checkout, ".git"), { recursive: true });
+	await writeFile(join(checkout, "source.txt"), "Uncommitted local source for Codex.");
+	let git = async (...args: string[]) => {
+		let result = Bun.spawn([
+			"git",
+			"-C",
+			checkout,
+			"-c",
+			"user.name=Test",
+			"-c",
+			"user.email=test@example.com",
+			"-c",
+			"core.hooksPath=/dev/null",
+			...args,
+		], { stdout: "pipe", stderr: "pipe" });
+		if (await result.exited) throw new Error(await new Response(result.stderr).text());
+	};
+	await git("init");
+	await git("add", "source.txt");
+	await git("commit", "-m", "initial test source");
+
+	let command = join(directory, "fake-codex.ts");
+	await writeFile(
+		command,
+		`#!${process.execPath}\nimport ${
+			JSON.stringify(join(ROOT, "e2e/harness/codex-process.ts"))
+		};\n`,
+	);
+	await chmod(command, 0o700);
+	let token = "local-workspace-codex-test-" + "a".repeat(43);
+	let extra = {
+		CHOPIN_MODE: "workspace",
+		CHOPIN_WORKSPACE_AGENT: "codex",
+		CHOPIN_CODEX_COMMAND: command,
+		CHOPIN_CODEX_STATE_DIR: join(directory, "codex-state"),
+		CHOPIN_WORKSPACE_DIR: directory,
+		CHOPIN_LOCAL_AI: JSON.stringify({
+			version: 1,
+			revision: 1,
+			connections: [{
+				id: "codex",
+				name: "Test Codex",
+				transport: "codex",
+				command: [command],
+				mode: "launch",
+				modelHosts: [],
+				launchApproved: true,
+				registeredAt: new Date().toISOString(),
+				models: ["codex-test", "codex-alternative"].map(id => ({
+					id,
+					name: id,
+					thinkingLevels: ["high"],
+				})),
+			}],
+			roles: Object.fromEntries(
+				["planner", "classifier", "prototyping"].map(
+					role => [role, { connection: "codex", model: "codex-test", thinkingLevel: "high" }],
+				),
+			),
+		}),
+		CHOPIN_WORKSPACE_TOKEN: token,
+		CHOPIN_WORKSPACES: JSON.stringify([{ name: "local/codex-test", path: checkout }]),
+	};
+	let child = await server(directory, false, extra);
+	let create = async (title: string) => {
+		let response = await page.request.post(ORIGIN + "/mcp", {
+			headers: { authorization: `Bearer ${token}` },
+			data: {
+				jsonrpc: "2.0",
+				id: 1,
+				method: "tools/call",
+				params: {
+					name: "create_document",
+					arguments: {
+						repository: "local/codex-test",
+						baseBranch: "main",
+						baseCommit: "a".repeat(40),
+						title,
+						idempotencyKey: crypto.randomUUID(),
+						plan: `# ${title}\n\nInitial document prose.\n`,
+						brief: {
+							goal: "Test local conversation",
+							constraints: [],
+							settledDecisions: [],
+							openQuestions: [],
+							repositoryFindings: [],
+						},
+					},
+				},
+			},
+		});
+		let payload = await response.json();
+		expect(payload.result.isError).not.toBe(true);
+		return payload.result.structuredContent as { id: string; url: string };
+	};
+	let first = await create("Codex first");
+	let second = await create("Codex second");
+	await page.goto(new URL(first.url, ORIGIN).href);
+	await page.getByRole("textbox", { name: "Workspace access key" }).fill(token);
+	await page.getByRole("button", { name: "Open workspace", exact: true }).click();
+	let composer = page.getByRole("combobox", { name: "Message", exact: true });
+	await expect(composer).toBeVisible();
+	let send = async (text: string) => {
+		await composer.fill(text);
+		await composer.press("Enter");
+	};
+	await send("Read my local source");
+	let reply = page.locator("[data-chat-scroll]").getByText(/Conversation .*Source:/);
+	await expect(reply).toContainText("Uncommitted local source for Codex.");
+	let identity = /Conversation ([^;]+)/.exec(await reply.innerText())![1]!;
+	await page.getByRole("button", { name: /^Model: / }).click();
+	await page.getByRole("option", { name: /^codex-alternative/ }).click();
+	await send("Use my selected model");
+	await expect(page.locator("[data-chat-scroll]").getByText(/model codex-alternative/))
+		.toContainText(
+			identity,
+		);
+	await send("Update the document");
+	await expect(page.locator("[contenteditable=true]").first()).toContainText(
+		"Updated through the dedicated Codex conversation.",
+	);
+	await send("Ask for approval");
+	await expect(page.getByText("Run this sandboxed command?", { exact: false }).first())
+		.toBeVisible();
+	await page.getByRole("radio", { name: "Yes", exact: true }).first().click();
+	await page.getByRole("button", { name: "Save", exact: true }).first().click();
+	await expect(page.locator("[data-chat-scroll]")).toContainText("Command approved in Chopin.");
+
+	await send("build and run");
+	await expect(page.locator("[data-chat-scroll]")).toContainText(
+		"Alternative A is ready in its copy.",
+	);
+	expect(await readFile(join(checkout, "source.txt"), "utf8")).toBe(
+		"Uncommitted local source for Codex.",
+	);
+	await send("Apply alternative");
+	await expect(
+		page.getByText("Apply this prototype to the original checkout?", { exact: false }).first(),
+	).toBeVisible();
+	await page.getByRole("radio", { name: "Yes", exact: true }).first().click();
+	await page.getByRole("button", { name: "Save", exact: true }).first().click();
+	await expect(page.locator("[data-chat-scroll]")).toContainText("Selected changes applied.");
+	expect(await readFile(join(checkout, "source.txt"), "utf8")).toBe("Selected prototype source.\n");
+	await send("Verify my commit");
+	await expect(page.locator("[data-chat-scroll]")).toContainText("Commit is still required.");
+	await git("add", "source.txt");
+	await git("commit", "-m", "human selected checkpoint");
+	await send("Verify my commit");
+	await expect(page.locator("[data-chat-scroll]")).toContainText("Manual commit verified.");
+	await page.goto(new URL(second.url, ORIGIN).href);
+	await expect(composer).toBeVisible();
+	await send("Read the second document's source");
+	await expect(reply).toContainText("Selected prototype source.");
+	expect(await reply.innerText()).not.toContain(identity);
+	await stop(child);
+	child = await server(directory, false, extra);
+	await page.goto(new URL(first.url, ORIGIN).href);
+	await expect(composer).toBeVisible();
+	await send("Continue after restart");
+	await expect(
+		page.locator("[data-chat-scroll]").getByText(
+			new RegExp(`Conversation ${identity}; model codex-alternative`),
+		),
+	).toHaveCount(2);
+	await send("Wait for Stop");
+	await page.getByRole("button", { name: "Stop Chopin", exact: true }).click();
+	await expect(page.getByRole("button", { name: "Stop Chopin", exact: true })).toHaveCount(0);
+	await page.goto(ORIGIN + "/settings/ai");
+	await expect(page.getByRole("heading", { name: "Local AI settings" })).toBeVisible();
+	await page.getByRole("button", { name: "Add custom agent" }).click();
+	await page.getByLabel("Connection name").fill("Test connection");
+	await page.getByRole("combobox", { name: /^Transport/ }).selectOption("codex");
+	await page.getByLabel("Executable and arguments (one per line)").fill(command);
+	await page.getByRole("button", { name: "Save for next launch" }).click();
+	await expect(page.getByRole("status")).toContainText("Saved");
+	await expect(page.getByRole("checkbox")).toBeDisabled();
+	let initialized = await page.request.post(ORIGIN + "/mcp", {
+		headers: { authorization: `Bearer ${token}` },
+		data: {
+			jsonrpc: "2.0",
+			id: 30,
+			method: "initialize",
+			params: {
+				protocolVersion: "2024-11-05",
+				capabilities: {},
+				clientInfo: { name: "test-ai", version: "1" },
+			},
+		},
+	});
+	let mcpSession = initialized.headers()["mcp-session-id"]!;
+	let handshake = await page.request.post(ORIGIN + "/mcp", {
+		headers: { authorization: `Bearer ${token}`, "mcp-session-id": mcpSession },
+		data: {
+			jsonrpc: "2.0",
+			id: 31,
+			method: "tools/call",
+			params: { name: "confirm_workspace_ai_connection", arguments: { connection: "custom" } },
+		},
+	});
+	expect((await handshake.json()).result.isError).not.toBe(true);
+	await page.getByRole("button", { name: "Reload saved settings" }).click();
+	await expect(page.getByText("MCP registration confirmed", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Probe reported models (starts agent)" }).click();
+	await expect(page.getByRole("status")).toContainText("Reported models loaded");
+	for (let role of ["Planner AI", "Classifier AI", "Prototyping AI"]) {
+		let field = page.getByRole("group", { name: role, exact: true });
+		await field.getByLabel("Connection and model").selectOption("custom:codex-test");
+		await field.getByLabel("Thinking level").selectOption("high");
+	}
+	await page.getByRole("combobox", { name: /^Start connection/ }).selectOption("launch");
+	await page.getByRole("checkbox").check();
+	await page.getByRole("button", { name: "Save for next launch" }).click();
+	await expect(page.getByRole("status")).toContainText("Saved");
+	let saved = await (await page.request.get(ORIGIN + "/api/workspace/ai")).json();
+	expect(saved.pending.roles.classifier.thinkingLevel).toBe("high");
+	expect(saved.pending.connections[0].launchApproved).toBe(true);
+	expect(saved.active.roles.planner.connection).toBe("codex");
+	await stop(child);
+	saved.pending.connections[0].mode = "attach";
+	await writeFile(
+		join(directory, "settings.json"),
+		JSON.stringify({
+			version: 1,
+			token,
+			port: e2ePort(8791),
+			databaseUrl: process.env.E2E_DATABASE_URL_3!,
+			repositories: [{ name: "local/codex-test", path: checkout }],
+		}),
+	);
+	child = await server(directory, false, {
+		...extra,
+		CHOPIN_LOCAL_AI: JSON.stringify(saved.pending),
+	});
+	let bridge = spawn(process.execPath, ["scripts/workspace-agent.ts", "custom"], {
+		cwd: ROOT,
+		detached: true,
+		env: { ...process.env, CHOPIN_WORKSPACE_DIR: directory },
+		stdio: ["ignore", "ignore", "pipe"],
+	});
+	processes.push(bridge);
+	await page.goto(new URL(second.url, ORIGIN).href);
+	await expect(composer).toBeVisible();
+	let manualReplies = page.locator("[data-chat-scroll]").getByText(/Source:/);
+	let priorReplies = await manualReplies.count();
+	await send("Read through my manually attached connection");
+	await expect(manualReplies).toHaveCount(priorReplies + 1);
+	await expect(page.locator("[data-chat-scroll]").getByText(/Source:/).last()).toContainText(
+		"Selected prototype source.",
+	);
+	await stop(bridge);
+	await stop(child);
 });

@@ -2405,14 +2405,21 @@ export function documentRoom(context: Room): DocumentRoom {
 			},
 		}),
 		...(!chat.job && {
-			checkReply: (text, signal) =>
-				checkPlannerReply(
+			checkReply: (
+				text,
+				signal,
+			) => (chat.agent?.checkReply
+				? chat.agent.checkReply(
+					text,
+					signal ?? chat.turnController?.signal ?? new AbortController().signal,
+				)
+				: checkPlannerReply(
 					text,
 					context.decide,
 					signal && chat.turnController
 						? AbortSignal.any([signal, chat.turnController.signal])
 						: signal ?? chat.turnController?.signal ?? new AbortController().signal,
-				),
+				)),
 		}),
 		currentMemberRequest: () => currentMemberRequest(chat),
 		...(!chat.job && {
@@ -2716,7 +2723,10 @@ async function repositorySession(
 			if (binding.signal.aborted) {
 				throw new PlannerOwnerUnavailableError("Chopin's owner is unavailable");
 			}
-			throw new Error(`Chopin's session is unavailable (${result.error.kind})`);
+			throw ["codex", "local-ai"].includes(context.config.harness) && "cause" in result.error
+					&& result.error.cause instanceof Error
+				? result.error.cause
+				: new Error(`Chopin's session is unavailable (${result.error.kind})`);
 		}
 		opened = result.value;
 		if (
@@ -2991,6 +3001,7 @@ async function run(
 			let { notice: _, ...choice } = picked ?? {};
 			let session = opened.session;
 			await publishPlannerReplies({
+				checkReply: session.checkReply,
 				session: { stream: (text, abort) => session.stream(text, abort, choice) },
 				prompt,
 				signal,

@@ -28,6 +28,7 @@ import {
 } from "@chopin/editor";
 import { chatDraftKey } from "../demo-actor";
 import { WireLost, WireRefusal } from "../wire";
+import { useWorkspaceMode } from "../workspace-mode";
 import { canWithdraw } from "./withdraw";
 import {
 	echoes,
@@ -425,7 +426,8 @@ export function Chat(
 	let outboxed = agent && sendAcknowledgements;
 	// A draft never waits on the connection; only sending does.
 	let draftable = !readonly && !archived;
-	let effectiveMode = !!agent && (mode || draft.submission?.to === "planner"
+	let localMode = useWorkspaceMode();
+	let effectiveMode = !!agent && (localMode || mode || draft.submission?.to === "planner"
 		|| addressedOutsideReferences(draft.text, draft.references));
 	let plannerBound = outboxed && effectiveMode;
 	let { working: workingTurn, suspended: suspendedWork } = progressOf(

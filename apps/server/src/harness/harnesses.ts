@@ -6,6 +6,8 @@ import { forgetWorkspaces, workflowJournal } from "./atomic/workspace";
 import { createCopilotSdk } from "./copilot-sdk/adapter";
 import { withModelOutput } from "./model-output";
 import { createRemoteAdapter } from "./remote/adapter";
+import { createCodexAdapter } from "./codex/adapter";
+import { createLocalAiHarness } from "../workspace/ai-runtime";
 import { readingOutput } from "../agent/reading-output";
 import { remoteCatalog } from "./catalog";
 import { attachedLink } from "./remote/registry";
@@ -47,6 +49,8 @@ export const harnesses = {
 	"copilot-sdk": reading(createCopilotSdk),
 	atomic: reading(createAtomicHarness),
 	remote: reading(createRemoteHarness),
+	codex: reading(() => createCodexAdapter()),
+	"local-ai": reading(() => createLocalAiHarness()),
 } satisfies Record<
 	string,
 	(settings: {
@@ -93,6 +97,12 @@ export function harnessFor(config: {
 }): HarnessV1 {
 	if (!Object.hasOwn(harnesses, config.harness)) {
 		throw new Error(`Unknown harness: ${config.harness}`);
+	}
+	if (
+		["codex", "local-ai"].includes(config.harness)
+		&& (process.env.CHOPIN_MODE !== "workspace" || !loopback(config.host ?? "127.0.0.1"))
+	) {
+		throw new Error("The Codex harness requires a loopback local workspace");
 	}
 	let extensions = checkedExtensions(config.harness, config.harnessExtensions);
 	let auth = config.harnessAuth;
@@ -143,7 +153,9 @@ export async function plannerCatalog(
 ): Promise<Wire.ModelCatalog | undefined> {
 	if (harness === "remote") return remoteCatalog(attachedLink(channelId)?.catalog, operatorModel);
 	let atomic = selected as { catalog?: (model: string | undefined) => Promise<Wire.ModelCatalog> };
-	if (harness === "atomic" && atomic?.catalog) return atomic.catalog(operatorModel);
+	if (["atomic", "codex", "local-ai"].includes(harness) && atomic?.catalog) {
+		return atomic.catalog(operatorModel);
+	}
 	return undefined;
 }
 

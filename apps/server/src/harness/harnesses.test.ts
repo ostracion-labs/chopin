@@ -19,7 +19,7 @@ import type { AgentLink } from "./remote/link";
 afterEach(shutdownHarnesses);
 
 it("selects the tested Copilot SDK, Atomic, and remote harnesses", () => {
-	expect(Object.keys(harnesses)).toEqual(["copilot-sdk", "atomic", "remote"]);
+	expect(Object.keys(harnesses)).toEqual(["copilot-sdk", "atomic", "remote", "codex", "local-ai"]);
 	expect(harnessFor({ harness: "copilot-sdk" }).harnessId).toBe("copilot-sdk");
 	expect(() => harnessFor({ harness: "not-installed" })).toThrow("Unknown harness: not-installed");
 });

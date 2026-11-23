@@ -1,3 +1,4 @@
+import { workspaceAiMcpTools } from "../workspace/ai-routes";
 import { handler } from "../mcp";
 import { AdmissionDenied } from "../auth/admission";
 import { ownOrigin } from "../auth/config";
@@ -37,7 +38,22 @@ export function registerMcpRoutes(
 	persistence?: ImplementationPersistence,
 	callbacks?: HostedCallbacks,
 ): void {
-	let endpoint = handler(hosted(auth, persistence, callbacks));
+	let contract = hosted(
+		auth,
+		persistence,
+		auth.config.workspace
+			? { ...callbacks, visualAdmission: undefined, invokePlanner: undefined }
+			: callbacks,
+	);
+	if (auth.config.workspace) {
+		// A local document credential never grants work execution or a hosted model turn.
+		delete contract.implementations;
+		delete contract.invoke;
+	}
+	let endpoint = handler({
+		...contract,
+		...(auth.config.workspace ? { extraTools: workspaceAiMcpTools() } : {}),
+	});
 	let route = async (request: Request): Promise<Response> => {
 		if (request.headers.has("origin") && !ownOrigin(auth.config, request.headers.get("origin"))) {
 			return protectedResponse(new Response("origin is not allowed", { status: 403 }));

@@ -2,6 +2,7 @@ import { KeyboardIcon, LockIcon, SignInIcon } from "@chopin/icons";
 import { Face } from "@chopin/editor/face";
 
 import { MenuItem, MenuSeparator } from "./menu-item";
+import { useWorkspaceMode } from "./workspace-mode";
 
 import type * as Api from "./api";
 import type { Ref } from "react";
@@ -21,6 +22,7 @@ export function menuItemTarget(key: string, current: number, count: number): num
 }
 
 export function AccountMenu({ id, menu }: { id?: string; menu: AccountMenuState }) {
+	let workspace = useWorkspaceMode();
 	return (
 		<div
 			aria-hidden={menu.closing ? "true" : undefined}
@@ -43,9 +45,14 @@ export function AccountMenu({ id, menu }: { id?: string; menu: AccountMenuState 
 			}}
 			role="menu"
 		>
-			<MenuItem density="compact" href="/auth/github/install" rel="noopener" target="_blank">
+			<MenuItem
+				density="compact"
+				href={workspace ? "/settings/ai" : "/auth/github/install"}
+				rel="noopener"
+				target={workspace ? undefined : "_blank"}
+			>
 				<LockIcon aria-hidden="true" size={16} />
-				Manage repository access
+				{workspace ? "AI settings" : "Manage repository access"}
 			</MenuItem>
 			<MenuItem
 				density="compact"

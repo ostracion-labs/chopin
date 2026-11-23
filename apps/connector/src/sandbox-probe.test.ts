@@ -55,6 +55,25 @@ function host(
 	return { host: made, ran };
 }
 
+test("offline MCP confinement needs no network helpers and grants no loopback ingress", async () => {
+	let { host: machine, ran } = host({ tools: ["bwrap", "unshare"] });
+	expect(await probeSandbox(machine, "/mxc/lxc-exec", "", true)).toEqual({ engine: "bubblewrap" });
+	expect(ran).toEqual([probeRequest(machine, "bubblewrap", "", true)]);
+	for (let platform of ["linux", "darwin", "win32"] as const) {
+		let request = probeRequest(
+			{ ...machine, platform },
+			platform === "win32" ? "processcontainer" : platform === "darwin" ? "seatbelt" : "bubblewrap",
+			"",
+			true,
+		);
+		expect(request.runtimeConfig).toEqual({});
+		expect(request.network).toEqual({
+			egress: { default: "deny" },
+			ingress: { default: "deny", hostLoopback: "deny" },
+		});
+	}
+});
+
 test("on Ubuntu 24.04 with AppArmor restricting user namespaces the one fix installs and permits in one sudo", async () => {
 	let { host: ubuntu, ran } = host({
 		tools: TOOLS.filter(tool => tool !== "slirp4netns"),

@@ -337,6 +337,14 @@ export function agentStateDirectories(
 	} else if (program === "copilot") {
 		dirs.push(path.join(home, ".copilot"));
 		if (env.COPILOT_HOME && isAbsolute(env.COPILOT_HOME)) dirs.push(env.COPILOT_HOME);
+	} else if (program === "claude-agent-acp" || program === "claude") {
+		dirs.push(path.join(home, ".claude"));
+	} else if (program === "opencode") {
+		dirs.push(
+			path.join(env.XDG_DATA_HOME || path.join(home, ".local", "share"), "opencode"),
+			path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "opencode"),
+			path.join(env.XDG_STATE_HOME || path.join(home, ".local", "state"), "opencode"),
+		);
 	} else if (program === "pdd-kit") {
 		dirs.push(path.join(home, ".pdd-kit"));
 	}
@@ -357,6 +365,8 @@ export function commandLine(platform: NodeJS.Platform, words: readonly string[])
 
 /** What one launch may touch, once the connector has looked at the disk. */
 export type Policy = {
+	/** No proxy or host network: local IPC remains inside the process sandbox. */
+	offline?: boolean;
 	platform: NodeJS.Platform;
 	engine: SandboxEngine;
 	command: readonly string[];
@@ -385,7 +395,7 @@ export type MxcRequest = {
 		egress: { default: "deny" };
 		ingress: { default: "allow" | "deny"; hostLoopback: "allow" | "deny" };
 	};
-	runtimeConfig: { networkProxy: string };
+	runtimeConfig: { networkProxy?: string };
 };
 
 const CONTAINMENT = {
@@ -401,7 +411,7 @@ const CONTAINMENT = {
  * `telemetry` is set, so MXC's stays off. `timeout` 0 leaves the run's length to the connector.
  */
 export function mxcRequest(policy: Policy): MxcRequest {
-	let windows = policy.platform === "win32";
+	let windows = policy.platform === "win32" && !policy.offline;
 	return {
 		version: "1.0.0",
 		containment: CONTAINMENT[policy.engine],
@@ -424,7 +434,7 @@ export function mxcRequest(policy: Policy): MxcRequest {
 				? { default: "allow", hostLoopback: "allow" }
 				: { default: "deny", hostLoopback: "deny" },
 		},
-		runtimeConfig: { networkProxy: policy.proxy },
+		runtimeConfig: policy.offline ? {} : { networkProxy: policy.proxy },
 	};
 }
 

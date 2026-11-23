@@ -192,7 +192,12 @@ function engineFor(host: Host): SandboxEngineName | SandboxReport {
  * The request the probe runs: the same shape as a real launch, with a command that does nothing,
  * so what MXC refuses to start for is what a run would be refused for.
  */
-export function probeRequest(host: Host, engine: SandboxEngineName, proxy: string): MxcRequest {
+export function probeRequest(
+	host: Host,
+	engine: SandboxEngineName,
+	proxy: string,
+	offline = false,
+): MxcRequest {
 	let windows = host.platform === "win32";
 	let system = host.env.SystemRoot ?? host.env.SYSTEMROOT ?? "C:\\Windows";
 	return {
@@ -213,11 +218,11 @@ export function probeRequest(host: Host, engine: SandboxEngineName, proxy: strin
 		filesystem: { readonlyPaths: [], readwritePaths: [], deniedPaths: [] },
 		network: {
 			egress: { default: "deny" },
-			ingress: windows
+			ingress: windows && !offline
 				? { default: "allow", hostLoopback: "allow" }
 				: { default: "deny", hostLoopback: "deny" },
 		},
-		runtimeConfig: { networkProxy: proxy },
+		runtimeConfig: offline ? {} : { networkProxy: proxy },
 	};
 }
 
@@ -230,6 +235,7 @@ export async function probeSandbox(
 	host: Host,
 	executor: string | undefined,
 	proxy: string,
+	offline = false,
 ): Promise<SandboxReport> {
 	let engine = engineFor(host);
 	if (typeof engine !== "string") return engine;
@@ -242,11 +248,14 @@ export async function probeSandbox(
 	let facts: LinuxFacts | undefined;
 	if (host.platform === "linux") {
 		facts = linuxFacts(host);
+		if (offline) {
+			facts.missing = facts.missing.filter(tool => tool === "bwrap" || tool === "unshare");
+		}
 		if (facts.missing.length || facts.restricted) {
 			return NONE(linuxReason(facts), linuxFix(facts));
 		}
 	}
-	let ran = await host.run(executor, probeRequest(host, engine, proxy));
+	let ran = await host.run(executor, probeRequest(host, engine, proxy, offline));
 	if (ran.code === 0) return { engine };
 	let message = failureMessage(ran.output);
 	if (

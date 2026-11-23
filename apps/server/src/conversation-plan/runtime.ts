@@ -22,6 +22,7 @@ import { decisionGeneration } from "../questions/card-actions";
 
 type RuntimeDeps = {
 	config: Pick<Config, "agent" | "conversationPlan">;
+	localWorkspace?: boolean;
 	/** The deployment's decisions boundary; required when conversation analysis runs. */
 	decide?: Decide;
 	server: () => Server<SocketData>;
@@ -132,7 +133,8 @@ export function createConversationRuntime(deps: RuntimeDeps) {
 			&& !deps.unavailable(room.id);
 		let announcer: Chat.Announcer = { chat: opened.chat, plan: opened, server, room: room.id };
 		let processor: Processor | undefined;
-		let coordinator = archived || deps.unavailable(room.id) ? undefined : createPlannerJobs({
+		let unavailable = archived || deps.unavailable(room.id) || deps.localWorkspace;
+		let coordinator = unavailable ? undefined : createPlannerJobs({
 			plan: opened,
 			exclusive: action => Plan.exclusive(opened, action),
 			persist: () => Plan.persistExclusive(opened),

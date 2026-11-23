@@ -143,6 +143,7 @@ import {
 } from "./question-page";
 import { ResearchRequestStore } from "./research-requests";
 import { GitHubReferenceCache } from "./github-references";
+import { useWorkspaceMode } from "./workspace-mode";
 import { Wire } from "./wire";
 import { readsConnected } from "./wire-loss";
 import { ExperimentStore } from "./experiments/store";
@@ -620,7 +621,13 @@ export function RoomWorkspace(
 	let user = useMemo(() => ({ name: personName(handle), color: cursor(handle).color }), [handle]);
 	let { frame, mode, phone, space } = useWorkspaceLayout();
 	let workspaceIds = useWorkspaceIds();
-	let profile = workspaceProfile(presentation);
+	let localMode = useWorkspaceMode();
+	let baseProfile = workspaceProfile(presentation);
+	let profile = {
+		...baseProfile,
+		implementation: !localMode && baseProfile.implementation,
+		research: !localMode && baseProfile.research,
+	};
 	let [implementation, setImplementation] = useState<Plan.ImplementationStatus>({
 		revision: -1,
 		locked: false,
@@ -679,8 +686,11 @@ export function RoomWorkspace(
 	);
 	let githubReferences = useMemo(() => new GitHubReferenceCache({ channelId: room }), [room]);
 	let links = useMemo(
-		() => ({ owner: repository.owner, name: repository.name, ref: repository.defaultBranch }),
-		[repository.defaultBranch, repository.name, repository.owner],
+		() =>
+			localMode
+				? undefined
+				: ({ owner: repository.owner, name: repository.name, ref: repository.defaultBranch }),
+		[localMode, repository.defaultBranch, repository.name, repository.owner],
 	);
 	// Wherever this room draws a link (the document, an earlier version, Chat, a decision card), a
 	// path in the repository means a file there.

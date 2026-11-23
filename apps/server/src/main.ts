@@ -41,7 +41,10 @@ import type { PlannerAttachment } from "./harness/remote/attachments";
 import { MachinePlanners } from "./harness/remote/machine-planners";
 import { documentUrl } from "./channels/document-url";
 import { ActiveOwnerBindings } from "./agent/active-owner";
+import { registerWorkspaceAiRoutes } from "./workspace/ai-routes";
 import { registerAuthRoutes } from "./auth/routes";
+import { workspaceFrameAllowed, workspaceRequest } from "./workspace/routes";
+import { resetCodexConversation } from "./harness/codex/adapter";
 import { registerExperimentRoutes } from "./experiments/routes";
 import { registerImageRoutes } from "./images/routes";
 import type { ExperimentRuntime } from "./experiments/routes";
@@ -185,7 +188,7 @@ type ResearchRequestView = ResearchWire.RequestView;
 const config = load();
 /** The one decisions boundary, checked against Atomic's registry before anything starts. */
 const decide = await openDecisions(config);
-const visualAdmission = createVisualAdmission(decide);
+const visualAdmission = config.auth.workspace ? undefined : createVisualAdmission(decide);
 harnessFor(config);
 const storage = createStorage(config.storage);
 const documentHistory = new DocumentHistory(storage);
@@ -285,6 +288,7 @@ let documentTransitions = new Map<string, Promise<void>>();
 let archivingChannels = new Set<string>();
 let deletingChannels = new Set<string>();
 let conversationRuntime = createConversationRuntime({
+	localWorkspace: !!config.auth.workspace,
 	config,
 	decide,
 	server: () => server,
@@ -1331,6 +1335,10 @@ async function receive(ws: Socket, raw: string): Promise<void> {
 		return;
 	}
 
+	if (config.auth.workspace && !workspaceFrameAllowed(frame, config.agent)) {
+		if (frame.rid) fail(ws, frame.rid, "This action is unavailable in local workspace mode");
+		return;
+	}
 	switch (frame.kind) {
 		case "session:ping":
 			return tell(ws, { kind: "session:ping", ts: 0, rid: frame.rid });
@@ -2074,6 +2082,10 @@ async function route(
 	abandoned: AbortSignal,
 ): Promise<Response | undefined> {
 	let url = new URL(req.url);
+	if (config.auth.workspace) {
+		let refused = workspaceRequest(req, config.auth.origin, config.agent);
+		if (refused) return refused;
+	}
 
 	if (url.pathname === "/ws") {
 		let outcome = await admit(req, url, hostedAuth, {
@@ -2927,6 +2939,16 @@ async function channelOwnerReset(channelId: string): Promise<void> {
 	ownerBindings?.revokeChannel(channelId);
 	plannerAttachments?.ownerReset(channelId);
 	await Promise.all([resetOpenAgents(room => room.id === channelId), jobs]);
+	if (config.harness === "codex") await resetCodexConversation(channelId);
+	if (config.harness === "local-ai") {
+		let { localRole } = await import("./workspace/ai-runtime");
+		let { localStateDirectory } = await import("./workspace/ai-config");
+		let { join } = await import("node:path");
+		await resetCodexConversation(
+			channelId,
+			join(localStateDirectory(), "ai-sessions", localRole("planner").connection.id),
+		);
+	}
 	await cancelSaved(channelId, "agent");
 }
 
@@ -2983,6 +3005,8 @@ let hostedAuth = registerAuthRoutes(router, {
 let machinePlanners = config.agent && config.harness === "remote"
 	? new MachinePlanners(hostedAuth)
 	: undefined;
+registerWorkspaceAiRoutes(router, hostedAuth);
+
 experiments = registerExperimentRoutes(router, hostedAuth, {
 	planners: machinePlanners,
 	attachments: () => plannerAttachments,

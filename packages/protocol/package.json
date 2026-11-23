@@ -56,6 +56,10 @@
 		"./run-stages": {
 			"types": "./run-stages.ts",
 			"default": "./run-stages.ts"
+		},
+		"./local-ai": {
+			"types": "./local-ai.ts",
+			"default": "./local-ai.ts"
 		}
 	}
 }

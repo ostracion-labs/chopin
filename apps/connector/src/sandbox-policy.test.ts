@@ -318,6 +318,27 @@ test("on Windows the ProcessContainer needs ingress and host loopback allowed to
 	expect(request.runtimeConfig.networkProxy).toBe("http://127.0.0.1:4000");
 });
 
+test("offline MCP policies have no proxy or host networking on any platform", () => {
+	for (let platform of ["linux", "darwin", "win32"] as const) {
+		let request = mxcRequest({
+			...policy(
+				platform,
+				platform === "win32"
+					? "processcontainer"
+					: platform === "darwin"
+					? "seatbelt"
+					: "bubblewrap",
+			),
+			offline: true,
+		});
+		expect(request.runtimeConfig).toEqual({});
+		expect(request.network).toEqual({
+			egress: { default: "deny" },
+			ingress: { default: "deny", hostLoopback: "deny" },
+		});
+	}
+});
+
 test("the request never opts in to MXC's telemetry and carries no rule MXC would take as an egress rule", () => {
 	for (let platform of ["linux", "darwin", "win32"] as const) {
 		let request = mxcRequest(policy(platform, "bubblewrap")) as Record<string, unknown>;

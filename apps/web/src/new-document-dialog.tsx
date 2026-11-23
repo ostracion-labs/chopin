@@ -3,6 +3,7 @@ import { useId, useRef, useState } from "react";
 import { NavigationDialog } from "./navigation-dialog";
 import { canManageProject } from "./navigation-model";
 import { TerminalAlert } from "./terminal-alert";
+import { useWorkspaceMode } from "./workspace-mode";
 
 import type * as Api from "./api";
 import type { NavigationDialogMotion } from "./navigation-dialog";
@@ -20,6 +21,7 @@ export function NewDocumentDialog(
 		onRetry?: () => void;
 	},
 ) {
+	let workspace = useWorkspaceMode();
 	let input = useRef<HTMLInputElement>(null);
 	let searchId = useId();
 	let [query, setQuery] = useState("");
@@ -109,12 +111,14 @@ export function NewDocumentDialog(
 						<button className="btn btn-md btn-primary" onClick={onAddProject} type="button">
 							Add project
 						</button>
-						<a
-							className="block text-sm font-medium text-brand underline"
-							href="/auth/github/install"
-						>
-							Manage repository access
-						</a>
+						{!workspace && (
+							<a
+								className="block text-sm font-medium text-brand underline"
+								href="/auth/github/install"
+							>
+								Manage repository access
+							</a>
+						)}
 					</div>
 				)}
 		</NavigationDialog>

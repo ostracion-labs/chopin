@@ -210,6 +210,50 @@ test("next, previous and arrow keys cycle without moving the caret", async ({ jo
 	await expect(content(page)).toContainText("Intro paragraph.");
 });
 
+for (let reducedMotion of ["no-preference", "reduce"] as const) {
+	test(`paging from a tall decision restores the short card's top (${reducedMotion})`, async ({
+		join,
+		seed,
+	}) => {
+		let fixture = deckSeed({
+			before: "Intro paragraph.",
+			after: Array.from({ length: 25 }, (_, index) => `Following paragraph ${index}.`).join("\n\n"),
+		}, 3, { optionCounts: [1, 10, 1] });
+		await seed(fixture.source, fixture.state);
+		let page = await join("ana", { viewport: { width: 1280, height: 640 }, reducedMotion });
+		let next = deck(page).getByRole("button", { name: "Next decision" });
+		let previous = deck(page).getByRole("button", { name: "Previous decision" });
+		let scroller = page.locator('[data-document-view="plan"] [data-plan-scroll]');
+		let scrollTop = () => scroller.evaluate(element => element.scrollTop);
+		let settled = () => expect.poll(() =>
+			deck(page).evaluate(element => element.getAnimations({ subtree: true }).length)
+		).toBe(0);
+		let heading = (index: number) => top(page).getByRole("heading", { name: fixture.prompts[index] });
+
+		await top(page).evaluate(element => element.scrollIntoView({ block: "start" }));
+		await expect(next).toBeInViewport({ ratio: 1 });
+		let initial = await scrollTop();
+		await next.click();
+		await settled();
+		await expect(heading(1)).toBeInViewport();
+		expect(await scrollTop()).toBe(initial);
+
+		await next.scrollIntoViewIfNeeded();
+		await expect(heading(1)).not.toBeInViewport();
+		await next.click();
+		await settled();
+		await expect(heading(2)).toBeInViewport();
+
+		await previous.click();
+		await settled();
+		await previous.scrollIntoViewIfNeeded();
+		await expect(heading(1)).not.toBeInViewport();
+		await previous.press("ArrowLeft");
+		await settled();
+		await expect(heading(0)).toBeInViewport();
+	});
+}
+
 test("arrow keys inside a card's options do not cycle the deck", async ({ join, seed }) => {
 	let fixture = deckSeed({ before: "Intro paragraph." }, 2);
 	await seed(fixture.source, fixture.state);

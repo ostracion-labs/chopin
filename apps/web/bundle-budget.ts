@@ -35,7 +35,8 @@ export type JavaScriptBudget = { gzip: number; raw: number };
 // 260,106 B raw and 83,267 B gzip in the container build; allow about 400 B raw and 180 B gzip above that.
 export const INITIAL_JAVASCRIPT_BUDGET: JavaScriptBudget = {
 	gzip: 83_450,
-	raw: 260_500,
+	// The local AI settings route adds a small guard; its form remains in a lazy chunk.
+	raw: 260_700,
 };
 
 export function enforceInitialJavaScript(

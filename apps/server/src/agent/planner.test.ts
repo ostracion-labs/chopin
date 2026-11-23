@@ -39,6 +39,24 @@ test("all Planner surfaces compose coaching once and preserve their question bou
 	}
 });
 
+test("the local Planner delegates build and run and stops at the human commit", () => {
+	let prompt = plannerInstructions("local/score", undefined, {
+		localCodex: true,
+		cwd: "/tmp/score",
+		repositories: ["local/score"],
+	}).replace(/\s+/g, " ");
+	expect(prompt).toContain('says "build and run", read the current document');
+	expect(prompt).toContain("then call `prototype_local` in this turn");
+	expect(prompt).toContain("A saved Yes authorizes applying the reviewed files");
+	expect(prompt).toContain("Only the human member stages and commits those files");
+	expect(prompt).toContain("Call `verify_local_commit` only after the member reports committing");
+	expect(prompt).not.toContain("You do not implement");
+	expect(prompt).not.toContain("`read_implementation_graph`");
+	expect(prompt).not.toContain("`propose_investigation`");
+	expect(plannerInstructions("octo-org/score")).toContain("`read_implementation_graph`");
+	expect(plannerInstructions("octo-org/score")).not.toContain("`prototype_local`");
+});
+
 test("offers grounded optional diagrams with valid diagram and chart authoring examples", () => {
 	expect(PROMPT).toContain(DIAGRAM_AUTHORING);
 	expect(plannerInstructions("octo-org/score")).toContain(DIAGRAM_AUTHORING);

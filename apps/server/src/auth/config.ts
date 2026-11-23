@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { workspaceRepositories, workspaceToken } from "../workspace/config";
+import type { WorkspaceConfig } from "../workspace/config";
 export type AuthConfig = {
 	origin: string;
 	/** Origins the deployment was served from before APP_ORIGIN (PREVIOUS_ORIGINS). */
@@ -10,6 +12,8 @@ export type AuthConfig = {
 	allowedUsers?: ReadonlySet<string>;
 	allowedOrganizations?: ReadonlySet<string>;
 	local?: { installation: string; credentialsDir: string; port: number };
+	/** Opt-in, single-owner local repository authority. It is separate from GitHub device mode. */
+	workspace?: WorkspaceConfig;
 	demoPersonas?: true;
 };
 
@@ -84,6 +88,23 @@ function allowed(
 }
 
 export function loadAuth(port = 8787, host = process.env.SERVER_HOST || "127.0.0.1"): AuthConfig {
+	if (process.env.CHOPIN_MODE === "workspace") {
+		let appOrigin = origin(process.env.APP_ORIGIN);
+		let parsed = new URL(appOrigin);
+		if (
+			!["127.0.0.1", "::1", "localhost"].includes(host)
+			|| !["127.0.0.1", "[::1]", "localhost"].includes(parsed.hostname)
+			|| Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80)) !== port
+		) throw new Error("Workspace mode requires a loopback SERVER_HOST and APP_ORIGIN on PORT");
+		let token = workspaceToken(process.env.CHOPIN_WORKSPACE_TOKEN);
+		return {
+			origin: appOrigin,
+			appSlug: "local-workspace",
+			clientId: "local-workspace",
+			encryptionKey: new Uint8Array(createHash("sha256").update(`workspace:${token}`).digest()),
+			workspace: { token, repositories: workspaceRepositories(process.env.CHOPIN_WORKSPACES) },
+		};
+	}
 	let appSlug = process.env.GITHUB_APP_SLUG;
 	let clientId = process.env.GITHUB_APP_CLIENT_ID;
 	let clientSecret = process.env.GITHUB_APP_CLIENT_SECRET;

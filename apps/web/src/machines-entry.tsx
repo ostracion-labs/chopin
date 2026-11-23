@@ -15,6 +15,7 @@ import {
 } from "./machine-summary";
 
 import { useNavigationDocument, useNavigationMenu } from "./navigation-shell";
+import { useWorkspaceMode } from "./workspace-mode";
 import "./machines-entry.css";
 
 import type { Machine, TeammateMachine } from "./machine-summary";
@@ -34,6 +35,14 @@ const ANY = "any";
  * a dot while any is connected, or a warning while the default is offline.
  */
 export function MachinesEntry(
+	props: { current?: boolean; placement: "sidebar" | "sheet" },
+) {
+	return useWorkspaceMode()
+		? null
+		: <ConnectedMachinesEntry current={props.current} placement={props.placement} />;
+}
+
+function ConnectedMachinesEntry(
 	{ current = false, placement }: { current?: boolean; placement: "sidebar" | "sheet" },
 ) {
 	let [open, setOpen] = useNavigationMenu();

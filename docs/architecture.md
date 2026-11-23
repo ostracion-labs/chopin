@@ -9,6 +9,28 @@ supplies the hosted document agent runtime, currently named Planner. Under
 over the [agent connection](agent-connection.md), a WebSocket at
 `/api/v1/agent` on the same origin.
 
+The opt-in [local workspace](local-workspace.md) profile replaces GitHub identity
+with one local owner and registered checkouts. Its local AI harness routes Planner,
+Classifier and Prototyping roles to independently configured connections, models and
+thinking levels. Codex uses a private stdio app server with the existing ChatGPT login;
+ACP adapters run through the connector's required process sandbox. Each root document
+keeps a persistent conversation. Manual attachment and consented on-demand launch share
+the same tool contract. Discovery never starts a process; MCP registration, human defaults
+and launch consent precede activation on a subsequent launch.
+
+Codex's enabled stdio MCP servers are replaced with required, offline connector-sandbox
+launchers. Their native contracts and per-call human approvals remain in the conversation,
+while filesystem writes go only to private MCP state and prototype copies. The effective
+configuration is refreshed when the same document conversation resumes. Classifiers have
+no MCP services; remote HTTP MCP is not inherited. See [configured MCP tools](local-workspace.md#configured-mcp-tools).
+
+Planner source access is read-only. Prototyping workers write independent copies;
+a saved human Decision permits the host to apply a sealed candidate after conflict checks.
+The human commits manually, and a Git object check gates the next checkpoint. No code
+path stages, commits or pushes the original. The configured classifier preserves the
+existing reply-to-Decision check, using an isolated structured judgment rather than a
+provider-specific probability. Hosted research, build and GitHub execution routes stay off.
+
 This document describes the system boundaries and collaborative document model.
 See [Repository channels](channels.md) for channel creation and access,
 [Authentication](authentication.md) for identity, [Storage](storage.md) for the

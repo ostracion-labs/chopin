@@ -4,6 +4,7 @@
 	"packageManager": "bun@1.4.4",
 	"type": "module",
 	"scripts": {
+		"workspace": "bun scripts/workspace.ts",
 		"dev": "bun scripts/dev.ts",
 		"connector": "bun apps/connector/src/main.ts",
 		"dev:exe": "bun scripts/dev.ts --exe",

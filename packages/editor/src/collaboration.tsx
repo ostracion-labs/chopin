@@ -26,7 +26,13 @@ import {
 	syncLexicalUpdateToYjs,
 	syncYjsChangesToLexical,
 } from "@lexical/yjs";
-import { $getNodeByKey, BLUR_COMMAND, COMMAND_PRIORITY_EDITOR, FOCUS_COMMAND } from "lexical";
+import {
+	$getNodeByKey,
+	BLUR_COMMAND,
+	COMMAND_PRIORITY_EDITOR,
+	FOCUS_COMMAND,
+	SKIP_DOM_SELECTION_TAG,
+} from "lexical";
 import * as Y from "yjs";
 
 import { collapsed, enclosing } from "./collapse";
@@ -130,7 +136,24 @@ function Collaboration(options: CollaborationOptions) {
 		if (!editor) return;
 
 		let doc = new Y.Doc();
-		let provider = new PlanProvider({ ...options, doc });
+		let provider = new PlanProvider({
+			...options,
+			doc,
+			onRemoteUpdate(agent) {
+				let root = editor.getRootElement();
+				if (root && root.ownerDocument.activeElement === root && !editor.isComposing()) {
+					// Native navigation can move the caret before selectionchange reaches Lexical.
+					// Publish that selection before Yjs changes the document it points into.
+					editor.update(() => {}, {
+						discrete: true,
+						// A WebSocket message otherwise makes Lexical reuse its cached selection.
+						event: new Event("selectionchange"),
+						tag: SKIP_DOM_SELECTION_TAG,
+					});
+				}
+				options.onRemoteUpdate?.(agent);
+			},
+		});
 		let binding = createYjsBinding({ editor, id: DOC, doc, docMap: new Map([[DOC, doc]]) });
 		setCollab({ binding, provider });
 		options.onProvider?.(provider);

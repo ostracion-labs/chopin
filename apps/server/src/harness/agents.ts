@@ -12,6 +12,9 @@ import { GITHUB_TOOL_SCHEMAS } from "./github-tools";
 import { BACKGROUND_TOOL_NAMES, PLANNER_TOOL_NAMES, VISUAL_PLANNER_TOOL_NAMES } from "./tool-names";
 import { harnessFor } from "./harnesses";
 import { carryingThinkingLevel } from "./turn-level";
+import { LOCAL_PLANNER_TOOL_NAMES, localRepositoryTools } from "../workspace/repository-tools";
+import { workspaceRepositories } from "../workspace/config";
+import { localAiTools } from "../workspace/ai-tools";
 
 import type { HarnessV1 } from "@ai-sdk/harness";
 import type { ToolSet } from "ai";
@@ -92,14 +95,22 @@ export function createPlannerAgent(
 	profile?: ConversationPlan.JobKind,
 	visual = false,
 ) {
-	let names = profile
+	let local = process.env.CHOPIN_MODE === "workspace"
+		&& process.env.CHOPIN_WORKSPACE_AGENT === "codex";
+	let names = local ? LOCAL_PLANNER_TOOL_NAMES : profile
 		? BACKGROUND_TOOL_NAMES[profile]
 		: visual
 		? VISUAL_PLANNER_TOOL_NAMES
 		: PLANNER_TOOL_NAMES;
 	return new HarnessAgent({
 		harness: carryingThinkingLevel(harness),
-		tools: plannerTools,
+		tools: local
+			? {
+				...plannerTools,
+				...localAiTools,
+				...localRepositoryTools(workspaceRepositories(process.env.CHOPIN_WORKSPACES)),
+			}
+			: plannerTools,
 		activeTools: [...names],
 		permissionMode: "allow-reads",
 		callOptionsSchema: z.custom<PlannerCallOptions>(),

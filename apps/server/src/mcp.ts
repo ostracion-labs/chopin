@@ -215,6 +215,16 @@ export type McpOptions<Caller> = {
 	upload?: UploadImage<Caller>;
 	implementations?: Implementations<Caller>;
 	sessions?: McpSessions<Caller>;
+	extraTools?: Array<
+		Tool & {
+			execute: (
+				caller: Caller,
+				input: Record<string, unknown>,
+				client: { name: string; version: string; session: string },
+				registered: boolean,
+			) => Promise<unknown>;
+		}
+	>;
 };
 
 type Tool = {
@@ -990,18 +1000,21 @@ export function handler<Caller>(
 	let archiving = options.archive;
 	let restoring = options.restore;
 	let sessions = new Map<string, { name: string; version: string }>();
-	let tools = TOOLS.filter(tool =>
-		(tool.name !== "create_document" || creation)
-		&& (tool.name !== "update_document" || updating)
-		&& (tool.name !== "rename_document" || renaming)
-		&& (tool.name !== "archive_document" || archiving)
-		&& (tool.name !== "restore_document" || restoring)
-		&& (tool.name !== "invoke_planner" || options.invoke)
-		&& (tool.name !== "upload_image" || options.upload)
-		&& (!["read_implementation", "start_implementation"].includes(tool.name)
-			|| options.implementations)
-		&& (!isLifecycleTool(tool.name) || options.implementations?.reportLifecycle)
-	);
+	let tools = [
+		...TOOLS.filter(tool =>
+			(tool.name !== "create_document" || creation)
+			&& (tool.name !== "update_document" || updating)
+			&& (tool.name !== "rename_document" || renaming)
+			&& (tool.name !== "archive_document" || archiving)
+			&& (tool.name !== "restore_document" || restoring)
+			&& (tool.name !== "invoke_planner" || options.invoke)
+			&& (tool.name !== "upload_image" || options.upload)
+			&& (!["read_implementation", "start_implementation"].includes(tool.name)
+				|| options.implementations)
+			&& (!isLifecycleTool(tool.name) || options.implementations?.reportLifecycle)
+		),
+		...(options.extraTools ?? []).map(({ execute: _execute, ...spec }) => spec),
+	];
 	let instructions = serviceInstructions(tools);
 
 	async function dispatch(
@@ -1049,6 +1062,21 @@ export function handler<Caller>(
 					return notification
 						? undefined
 						: error(call.id, -32602, "invalid tool arguments");
+				}
+				let extension = options.extraTools?.find(item => item.name === tool.name);
+				if (extension) {
+					try {
+						return respond(
+							text(await extension.execute(caller, tool.arguments, client, registered)),
+						);
+					} catch (failure) {
+						return respond(
+							text(
+								{ error: failure instanceof Error ? failure.message : "Local tool failed" },
+								true,
+							),
+						);
+					}
 				}
 				if (tool.name === "list_documents") {
 					let input = listArguments(tool.arguments);

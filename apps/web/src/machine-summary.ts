@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
+import { useWorkspaceMode } from "./workspace-mode";
 import type { SandboxReport } from "@chopin/protocol/connector";
 import { sameJson } from "./same-json";
 
@@ -263,8 +264,10 @@ export const machines = machineFeed(listMachines, {
  * focus or becomes visible, so a machine paired in another tab shows up on return.
  */
 export function useLiveMachines(poll = false): LiveMachines {
+	let workspace = useWorkspaceMode();
 	let value = useSyncExternalStore(machines.watch, machines.snapshot, machines.snapshot);
 	useEffect(() => {
+		if (workspace) return;
 		let load = () => void machines.load();
 		let stop = poll ? machines.poll() : (load(), undefined);
 		window.addEventListener("focus", load);
@@ -274,7 +277,7 @@ export function useLiveMachines(poll = false): LiveMachines {
 			window.removeEventListener("focus", load);
 			document.removeEventListener("visibilitychange", load);
 		};
-	}, [poll]);
+	}, [poll, workspace]);
 	return value;
 }
 

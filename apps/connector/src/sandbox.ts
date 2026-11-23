@@ -41,6 +41,10 @@ import { type Proxy, startProxy } from "./sandbox-proxy";
 
 /** What one agent or Planner process is started with, and what it may touch. */
 export type Launch = {
+	/** Use only explicit read grants; local MCP servers must not inherit host executor sockets. */
+	readableOnly?: boolean;
+	/** Explicit read-only context outside the baseline roots, such as registered MCP source trees. */
+	readable?: string[];
 	command: string[];
 	cwd: string;
 	/** The whole environment the process gets. */
@@ -165,7 +169,7 @@ export async function locateExecutor(
 }
 
 /** Find `program` as MXC does: on PATH, then in the system directories. */
-function findProgram(program: string, env: NodeJS.ProcessEnv): string | undefined {
+export function findProgram(program: string, env: NodeJS.ProcessEnv): string | undefined {
 	let directories = [
 		...(env.PATH ?? "").split(delimiter).filter(entry => entry.startsWith("/")),
 		"/usr/local/sbin",
@@ -230,6 +234,10 @@ export function systemHost(env: NodeJS.ProcessEnv = process.env): Host {
 }
 
 export type SandboxOptions = {
+	/** Fully isolated networking for local tool servers; no proxy and no network helper. */
+	offline?: boolean;
+	/** Replace the connector defaults with this exact allow-list for local-only runtimes. */
+	hostsOnly?: string[];
 	/** The connector's state directory. */
 	directory: string;
 	/** Chopin's origin, which every run may reach. */
@@ -259,6 +267,7 @@ function unconfined(report: SandboxReport, refusal?: string): Sandbox {
 
 /** What the probe finds, without starting anything that stays: the report and MXC's executor. */
 export async function inspectSandbox(options: {
+	offline?: boolean;
 	directory: string;
 	settings?: SandboxSettings | undefined;
 	host?: Host;
@@ -272,7 +281,10 @@ export async function inspectSandbox(options: {
 		let executor = "executor" in options
 			? options.executor
 			: await locateExecutor(options.directory, host.platform, host.arch);
-		return { report: await probeSandbox(host, executor, "http://127.0.0.1:9"), executor };
+		return {
+			report: await probeSandbox(host, executor, "http://127.0.0.1:9", options.offline),
+			executor,
+		};
 	} catch (error) {
 		let reason = error instanceof Error ? error.message : String(error);
 		return {
@@ -290,6 +302,7 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 	let settings = options.settings ?? {};
 	let host = options.host ?? systemHost();
 	let { report, executor } = await inspectSandbox({
+		offline: options.offline,
 		directory: options.directory,
 		settings,
 		host,
@@ -304,10 +317,12 @@ export async function createSandbox(options: SandboxOptions): Promise<Sandbox> {
 		return unconfined(report, refusal);
 	}
 	let engine = report.engine;
-	let proxy: Proxy = await startProxy({
-		hosts: allowedHosts(options.server, settings.hosts),
-		refused: (name, port) => options.refused?.(name, port),
-	});
+	let proxy: Proxy = options.offline
+		? { url: "", port: 0, close: async () => {} }
+		: await startProxy({
+			hosts: options.hostsOnly ?? allowedHosts(options.server, settings.hosts),
+			refused: (name, port) => options.refused?.(name, port),
+		});
 	return {
 		report,
 		spawn: launch => spawnConfined(executor, engine, host, proxy, options, launch),
@@ -469,7 +484,7 @@ export function launchPolicy(
 	engine: SandboxEngine,
 	host: Host,
 	launch: Launch,
-	options: Pick<SandboxOptions, "directory" | "settings" | "home">,
+	options: Pick<SandboxOptions, "directory" | "settings" | "home" | "offline">,
 	proxy: string,
 	temporary: string,
 ): Policy {
@@ -524,7 +539,9 @@ export function launchPolicy(
 		...added,
 	].filter(path => exists(path));
 	let roots: string[];
-	if (platform === "win32") {
+	if (launch.readableOnly) {
+		roots = [];
+	} else if (platform === "win32") {
 		roots = windowsReadRoots(launch.env, home, {
 			directory: readableDirectory,
 			list: directory => disk.list(directory),
@@ -548,6 +565,7 @@ export function launchPolicy(
 	let written = new Set(writable.map(real));
 	let readable = [
 		...readGrantsAround(roots, hidden, disk, platform),
+		...(launch.readable ?? []).flatMap(named),
 		...(launch.own ?? []).filter(exists),
 		...person ? named(person) : [],
 		// The repository's git directory is read, whole, where only some roots are read (Windows).
@@ -561,6 +579,7 @@ export function launchPolicy(
 	env.NODE_USE_ENV_PROXY = "1";
 	for (let key of platform === "win32" ? ["TEMP", "TMP"] : ["TMPDIR"]) env[key] = temporary;
 	return {
+		...(options.offline ? { offline: true } : {}),
 		platform,
 		engine,
 		command: launch.command,

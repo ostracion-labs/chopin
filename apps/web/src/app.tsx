@@ -1,13 +1,17 @@
-import { rememberAvatars } from "@chopin/editor/people";
+import { rememberAvatars, setFaceProfiles } from "@chopin/editor/people";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import * as Api from "./api";
 import { actorResolutionNeeded } from "./active-actor";
 import { HostedApp, HostedFailure, HostedLoading, hostedRoute } from "./hosted";
 import { clearRepositoryCache } from "./repository-cache";
+import { WorkspaceMode } from "./workspace-mode";
 
 let loadHostedLogin = () => import("./hosted-login");
 let HostedLogin = lazy(() => loadHostedLogin().then(module => ({ default: module.HostedLogin })));
+let WorkspaceLogin = lazy(() =>
+	import("./workspace-login").then(module => ({ default: module.WorkspaceLogin }))
+);
 let LocalLogin = lazy(() =>
 	import("./local-login").then(module => ({ default: module.LocalLogin }))
 );
@@ -23,6 +27,9 @@ export function App() {
 		// a second round trip; it stays out of the initial bundle.
 		void loadHostedLogin().catch(() => {});
 		Api.session().then(value => {
+			if (value.auth === "workspace" && value.user) {
+				setFaceProfiles([{ id: value.user.login, name: "You", avatar: "/workspace-avatar.svg" }]);
+			}
 			// The picture GitHub's API returned at sign-in is every face for this person's.
 			if (value.user) {
 				rememberAvatars([{ login: value.user.login, avatarUrl: value.user.avatarUrl }]);
@@ -81,10 +88,24 @@ export function App() {
 	if (!session.user) {
 		return (
 			<Suspense fallback={<HostedLoading />}>
-				{session.auth === "local" ? <LocalLogin /> : <HostedLogin />}
+				{session.auth === "workspace"
+					? <WorkspaceLogin />
+					: session.auth === "local"
+					? <LocalLogin />
+					: <HostedLogin />}
 			</Suspense>
 		);
 	}
 	// Signed in, /machines is a page inside the navigation like any other (hosted.tsx).
-	return <HostedApp agent={session.agent} user={session.user} />;
+	return (
+		<WorkspaceMode.Provider value={session.auth === "workspace"}>
+			{session.auth === "workspace" && location.pathname === "/settings/ai"
+				? (
+					<Suspense fallback={<HostedLoading />}>
+						<WorkspaceLogin settings />
+					</Suspense>
+				)
+				: <HostedApp agent={session.agent} user={session.user} />}
+		</WorkspaceMode.Provider>
+	);
 }

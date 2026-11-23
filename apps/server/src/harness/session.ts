@@ -22,12 +22,17 @@ import { createHumanInput, PendingInputs } from "./atomic/human-input";
 import { type PlannerWorkspace, plannerWorkspace } from "./atomic/workspace";
 import { registerRemotePlanner, type RemotePlanner } from "./remote/registry";
 import { startingTurn } from "./turn-level";
+import { registerCodexPlanner } from "./codex/registry";
+import { LOCAL_PLANNER_TOOL_NAMES } from "../workspace/repository-tools";
+import { workspaceRepositories } from "../workspace/config";
+import { localReplyCheck } from "../workspace/ai-runtime";
+import type { CodexPlanner } from "./codex/registry";
 
 import type { HarnessAgent } from "@ai-sdk/harness/agent";
 import type { ActiveOwnerBinding } from "../agent/active-owner";
 import type { HostedRepository } from "../agent/repository";
 import type { DocumentRoom } from "../agent/tools";
-import type { RemoteWorkspace } from "../agent/planner";
+import type { LocalCodexWorkspace, RemoteWorkspace } from "../agent/planner";
 
 export type OpenError =
 	| GitHubToolsError
@@ -42,7 +47,9 @@ type PlannerAgent = typeof plannerAgent;
 export type PlannerChannel = {
 	room: DocumentRoom;
 	repository: HostedRepository;
-	instructions: string | ((workspace?: PlannerWorkspace | RemoteWorkspace) => string);
+	instructions:
+		| string
+		| ((workspace?: PlannerWorkspace | RemoteWorkspace | LocalCodexWorkspace) => string);
 	model?: string;
 	/**
 	 * `atomic` runs the session as a full Atomic session in the channel's workspace;
@@ -59,6 +66,7 @@ function applied(outcome: { status: string; message: string }): void {
 export type PlannerChoice = { model?: string; thinkingLevel?: string };
 
 export type PlannerSession = {
+	checkReply?: (text: string, signal: AbortSignal) => Promise<boolean>;
 	/** The tools this session offers; a full Atomic session reports the set of its running turn. */
 	activeTools?: readonly string[];
 	/**
@@ -185,6 +193,7 @@ export async function openPlannerSession(
 	let unregister: (() => void) | undefined;
 	let unregisterFull: (() => void) | undefined;
 	let unregisterRemote: (() => void) | undefined;
+	let unregisterCodex: (() => void) | undefined;
 	let session: Awaited<ReturnType<HarnessAgent["createSession"]>> | undefined;
 	let timeout: ReturnType<typeof setTimeout> | undefined;
 	try {
@@ -199,6 +208,16 @@ export async function openPlannerSession(
 		let listeners = new Set<(runs: PlannerRuns) => void>();
 		let linkListeners = new Set<() => void>();
 		let inputs = new PendingInputs();
+		let localPlanner: CodexPlanner | undefined;
+		if (["codex", "local-ai"].includes(channel.harness ?? "")) {
+			if (job) throw new Error("Local Codex runs only explicit document conversations");
+			localPlanner = {
+				channelId: channel.room.id,
+				repositoryId: channel.repository.id,
+				humanInput: createHumanInput(channel.room, undefined, undefined, inputs),
+			};
+			unregisterCodex = registerCodexPlanner(sessionId, localPlanner);
+		}
 		if (workspace) {
 			planner = {
 				cwd: workspace.cwd,
@@ -246,8 +265,19 @@ export async function openPlannerSession(
 			remote = held;
 			unregisterRemote = registerRemotePlanner(sessionId, held);
 		}
+		let localRepositories = ["codex", "local-ai"].includes(channel.harness ?? "")
+			? workspaceRepositories(process.env.CHOPIN_WORKSPACES)
+			: undefined;
 		let instructions = typeof channel.instructions === "function"
-			? channel.instructions(workspace ?? (remote && !job ? { remote: true } : undefined))
+			? channel.instructions(
+				localRepositories
+					? {
+						localCodex: true,
+						cwd: localRepositories.find(item => item.id === channel.repository.id)!.path,
+						repositories: localRepositories.map(item => item.name),
+					}
+					: workspace ?? (remote && !job ? { remote: true } : undefined),
+			)
 			: channel.instructions;
 		let agent = deps.agent ?? (job?.kind === "heading"
 			? deps.headingAgent ?? headingPlannerAgent
@@ -299,7 +329,7 @@ export async function openPlannerSession(
 			? remoteRunControl(remote, watchRuns)
 			: {};
 		let fixedTools = Object.freeze([
-			...(job
+			...(["codex", "local-ai"].includes(channel.harness ?? "") ? LOCAL_PLANNER_TOOL_NAMES : job
 				? BACKGROUND_TOOL_NAMES[job.kind]
 				: channel.room.visual
 				? VISUAL_PLANNER_TOOL_NAMES
@@ -308,11 +338,20 @@ export async function openPlannerSession(
 		return {
 			ok: true,
 			value: {
+				...(channel.harness === "local-ai" && localPlanner
+					? {
+						checkReply: (text: string, signal: AbortSignal) =>
+							localReplyCheck(localPlanner!, text, signal),
+					}
+					: {}),
 				get activeTools() {
-					return planner?.activeTools ?? remote?.activeTools ?? fixedTools;
+					return planner?.activeTools ?? remote?.activeTools ?? localPlanner?.activeTools
+						?? fixedTools;
 				},
 				...runControl,
-				...(planner || remote && !job ? { inputs } : {}),
+				...(planner || remote && !job || ["codex", "local-ai"].includes(channel.harness ?? "")
+					? { inputs }
+					: {}),
 				...(remote && !job
 					? {
 						rebind: (renewed: ActiveOwnerBinding) => {
@@ -347,7 +386,7 @@ export async function openPlannerSession(
 								...(choice?.model ? { model: choice.model } : {}),
 								instructions,
 								owner: current,
-								githubTools: tools,
+								githubTools: ["codex", "local-ai"].includes(channel.harness ?? "") ? {} : tools,
 								...(hostTools ? { toolSignal: hostTools.signal } : {}),
 							},
 						}));
@@ -363,6 +402,7 @@ export async function openPlannerSession(
 								unregister?.();
 								unregisterFull?.();
 								unregisterRemote?.();
+								unregisterCodex?.();
 							}
 						}
 					})(),
@@ -382,6 +422,7 @@ export async function openPlannerSession(
 		unregister?.();
 		unregisterFull?.();
 		unregisterRemote?.();
+		unregisterCodex?.();
 		let message = cause instanceof Error ? cause.message : String(cause);
 		let kind: "Timeout" | "ShuttingDown" | "HarnessCapabilityUnsupported" | "Unavailable" =
 			message.includes("timed out")

@@ -9,6 +9,7 @@ import { DeviceAuthorization } from "./device";
 import { LocalAuth } from "./local";
 import { LocalCredentials } from "./local-store";
 import { MACHINES_PATH } from "../http/machines-path";
+import { registerWorkspaceAuth } from "../workspace/routes";
 
 import type { SetupAgent } from "@chopin/protocol/agents";
 import type { AuthConfig } from "./config";
@@ -174,6 +175,7 @@ export function registerAuthRoutes(
 	router: Router,
 	dependencies: Dependencies,
 ): HostedAuth {
+	if (dependencies.config.workspace) return registerWorkspaceAuth(router, dependencies);
 	let clock = dependencies.clock ?? (() => new Date());
 	let config = dependencies.config;
 	let storage = dependencies.storage;
